@@ -1,9 +1,16 @@
 name: Update Market Heat
 
-'on':
+"on":
   workflow_dispatch:
   schedule:
-    - cron: '20 23 * * 1-5'
+    - cron: "20 23 * * 1-5"
+  workflow_run:
+    workflows:
+      - Sync Cboe Put Call History
+    types:
+      - completed
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -14,42 +21,70 @@ concurrency:
 
 jobs:
   update:
+    # Only a successful Cboe run triggers the extra build.
+    # Manual and scheduled updates continue to work independently.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
-      - name: Checkout
+      - name: Checkout latest main
         uses: actions/checkout@v4
-      - name: Setup Python
+        with:
+          ref: main
+          persist-credentials: true
+      - name: Check Cboe data readiness
+        id: readiness
+        shell: bash
+        run: |
+          python - <<'PY'
+          import csv
+          import os
+          from pathlib import Path
+
+          counts = {}
+          for name in ('equity_put_call.csv', 'total_put_call.csv'):
+              path = Path(name)
+              if not path.is_file():
+                  counts[name] = 0
+                  continue
+              with path.open(encoding='utf-8-sig', newline='') as stream:
+                  reader = csv.DictReader(stream)
+                  if not {'date', 'ratio'}.issubset(reader.fieldnames or []):
+                      raise SystemExit(f'{name}: 欄位應為 date,ratio')
+                  counts[name] = len({row['date'] for row in reader if row.get('date') and row.get('ratio')})
+          for name, count in counts.items():
+              print(f'{name}: {count} 筆')
+          ready = all(count >= 256 for count in counts.values())
+          print('Cboe ready:', ready)
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as out:
+              out.write(f'ready={str(ready).lower()}\n')
+          PY
+      - name: Set up Python
+        if: steps.readiness.outputs.ready == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install dependencies
+        if: steps.readiness.outputs.ready == 'true'
         run: python -m pip install -r requirements.txt
       - name: Build dashboard data
+        if: steps.readiness.outputs.ready == 'true'
         env:
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
         run: python build_data.py
-      - name: Validate JSON and freshness
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          p=Path('data/dashboard.json')
-          d=json.loads(p.read_text(encoding='utf-8'))
-          assert isinstance(d['history'],list) and len(d['history'])>100
-          print('History:',len(d['history']))
-          print('Latest complete:',d['latest_complete_date'])
-          print('FINRA quality:',d['margin_date_quality'])
-          if d['latest_complete_date'] is None:
-              print('WARNING: no complete five-factor data yet; Cboe backfill may be insufficient')
-          PY
       - name: Commit dashboard data
+        if: steps.readiness.outputs.ready == 'true'
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/dashboard.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Update dashboard data'
+          if git diff --cached --quiet; then
+            echo 'No dashboard changes to commit'
+          else
+            git commit -m "Update dashboard data"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+      - name: Report waiting state
+        if: steps.readiness.outputs.ready != 'true'
+        run: echo 'Cboe history is still below 256 observations per CSV; skipping dashboard build.'

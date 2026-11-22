@@ -7,7 +7,7 @@
 :root{color-scheme:dark;--bg:#0b1220;--card:#151f30;--line:#2a3950;--muted:#a3b1c5;--blue:#64b5ff;--green:#5ee0ac;--red:#ff8c96}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#edf4ff;font-family:-apple-system,BlinkMacSystemFont,'Noto Sans TC',sans-serif}main{max-width:940px;margin:auto;padding:24px 16px 80px}header{display:flex;justify-content:space-between;align-items:center;gap:12px}h1{font-size:25px;margin:4px 0}h2{font-size:17px;margin:0 0 16px}p{color:var(--muted);line-height:1.6}.small{font-size:12px;color:var(--muted)}.pill{border:1px solid var(--line);padding:7px 11px;border-radius:99px;font-size:12px;color:var(--muted)}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;margin-top:14px}.hero{display:flex;align-items:center;justify-content:space-between;gap:20px}.number{font-size:66px;line-height:1.2;font-weight:750;letter-spacing:-3px}.sub{font-size:13px;color:var(--muted)}.gauge{width:145px;height:145px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--blue) 0deg,var(--line) 0deg);flex-shrink:0}.gauge>div{width:115px;height:115px;border-radius:50%;background:var(--card);display:grid;place-items:center;text-align:center}.gauge strong{font-size:23px}.bar{height:8px;border-radius:10px;background:#2a3950;overflow:hidden}.fill{height:100%;background:var(--blue);width:0}.factor{margin:18px 0}.factorhead{display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;font-size:14px}.factorhead span:last-child{color:var(--muted)}.factor-date{margin:5px 0 8px;font-size:11px;color:var(--muted)}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}button{background:#202e43;border:1px solid var(--line);color:#e5efff;padding:9px 13px;border-radius:9px;cursor:pointer}button:disabled{opacity:.55;cursor:wait}button.active{background:#245785;border-color:#4088c6}canvas{width:100%!important;max-height:330px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{background:#101a29;border-radius:12px;padding:12px}.stat strong{display:block;font-size:21px;margin:7px 0}.warning{border-left:3px solid #eab86b;background:#302a20;padding:13px;border-radius:8px;color:#ffe2ad;font-size:13px;line-height:1.6}a{color:#8dc9ff}.hidden{display:none}@media(max-width:560px){.grid{grid-template-columns:1fr}.hero{align-items:center}.gauge{width:110px;height:110px}.gauge>div{width:87px;height:87px}.number{font-size:54px}.card{padding:16px}.stats{grid-template-columns:repeat(3,1fr)}.stat{padding:9px}.stat strong{font-size:17px}h1{font-size:22px}}
 </style></head>
 <body><main><header><div><div class="small">MARKET HEAT RADAR</div><h1>市場熱度雷達</h1></div><div class="header-actions"><button type="button" id="refreshBtn" aria-label="重新整理最新資料">↻ 重新整理</button><div class="pill" id="status">讀取資料中</div></div></header>
-<p class="small" id="updated">研究工具｜非投資建議</p>
+<p class="small" id="updated">研究工具｜非投資建議</p><p class="small" id="refreshFeedback" role="status" aria-live="polite">尚未檢查資料</p>
 <section class="card hero"><div><div class="small">美股散戶投機熱度</div><div class="number" id="score">—</div><div id="label">等待有效資料</div><div class="sub" id="asof">—</div></div><div class="gauge" id="gauge"><div><div><strong id="gaugeNum">—</strong><div class="small">/ 100</div></div></div></div></section>
 <div id="notice" class="warning" style="margin-top:14px">正在讀取資料。</div>
 <section class="card"><h2>歷史熱度與台股走勢</h2><div class="controls" id="periods"><button data-days="90">3 個月</button><button data-days="365" class="active">1 年</button><button data-days="1825">5 年</button><button data-days="0">全部</button></div><canvas id="trend" height="270" aria-label="歷史熱度與台股指數圖"></canvas><p class="small">藍線：熱度（左軸）｜灰線：台股加權指數（右軸）｜綠點：籌碼乾淨。缺少資料的區間不補值。</p></section>
@@ -70,7 +70,9 @@ $('periods').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;
 async function refreshData(){
  const btn=$('refreshBtn');
  if(btn.disabled)return;
+ const previous=payload?.generated_at||null;
  btn.disabled=true;btn.textContent='↻ 更新中…';$('status').textContent='更新中';
+ $('refreshFeedback').textContent='正在向 GitHub 取得資料…';
  try{
   const url='https://raw.githubusercontent.com/abcd5943-cell/market-heat-radar/main/data/dashboard.json?ts='+Date.now();
   const response=await fetch(url,{cache:'no-store'});
@@ -79,9 +81,14 @@ async function refreshData(){
   if(!Array.isArray(data.history))throw Error('資料格式不正確');
   payload=data;
   render();
+  const checked=new Date().toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false});
+  const generated=data.generated_at||null;
+  const result=!previous?'已成功取得資料':generated&&generated!==previous?'已取得較新版本的資料':'讀取成功，資料版本未變';
+  $('refreshFeedback').textContent=result+'｜檢查時間：'+checked+'（台灣時間）';
  }catch(e){
   $('status').textContent='更新失敗';
-  $('notice').textContent='無法取得最新資料：'+e.message+'。請稍後再試。';
+  $('refreshFeedback').textContent='更新失敗：未取得新資料';
+  $('notice').textContent='無法取得最新資料：'+e.message+'。畫面仍保留上次成功載入的資料，請稍後再試。';
  }finally{
   btn.disabled=false;btn.textContent='↻ 重新整理';
  }

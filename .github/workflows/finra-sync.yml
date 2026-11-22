@@ -1,0 +1,34 @@
+name: Sync FINRA Margin Data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 16 * * 1-5'
+permissions:
+  contents: write
+concurrency:
+  group: finra-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install requests pandas beautifulsoup4 lxml openpyxl
+      - name: Download FINRA monthly data
+        run: python fetch_finra.py
+      - name: Commit monthly data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add finra_margin_monthly.csv
+          if ! git diff --cached --quiet; then
+            git commit -m "Update FINRA monthly margin balances"
+            git push
+          else
+            echo "No changes"
+          fi

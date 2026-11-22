@@ -1,0 +1,57 @@
+name: Sync Cboe Put Call History
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 23 * * 1-5'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cboe-history-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Cboe dependencies
+        run: python -m pip install --disable-pip-version-check requests beautifulsoup4 pandas_market_calendars
+      - name: Fetch up to 30 missing trading days
+        run: python fetch_cboe.py --start 2020-01-01 --limit 30 --order newest --delay 1
+      - name: Check generated CSV files
+        run: |
+          python - <<'PY'
+          import csv
+          from pathlib import Path
+          for name in ('equity_put_call.csv', 'total_put_call.csv'):
+              path = Path(name)
+              if not path.is_file():
+                  raise SystemExit(f'Missing {name}')
+              with path.open(encoding='utf-8-sig', newline='') as f:
+                  rows = list(csv.DictReader(f))
+              if not rows or set(rows[0]) != {'date', 'ratio'}:
+                  raise SystemExit(f'Invalid {name}')
+              print(f'{name}: {len(rows)} records, latest {rows[-1]["date"]}')
+          PY
+      - name: Commit updated CSV files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add equity_put_call.csv total_put_call.csv
+          if git diff --cached --quiet; then
+            echo 'No CSV changes to commit'
+          else
+            git commit -m 'data: update Cboe put-call history'
+            git push
+          fi

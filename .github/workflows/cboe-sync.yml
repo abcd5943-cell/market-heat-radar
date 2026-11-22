@@ -31,7 +31,7 @@ jobs:
       - name: Fetch at most 25 trading days with 10-second pauses
         id: fetch
         continue-on-error: true
-        run: python fetch_cboe.py --start 2020-01-01 --limit 25 --order newest --delay 10
+        run: python fetch_cboe.py --start 2020-01-01 --limit 50 --order newest --delay 10
       - name: Validate CSV records
         run: |
           python - <<'PY'

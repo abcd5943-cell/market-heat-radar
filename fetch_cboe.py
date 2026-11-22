@@ -1,14 +1,6 @@
-"""Cboe Equity / Total Put-Call 歷史回補與每日增量更新。
+"""Cboe Equity / Total Put-Call 歷史回補；遇到限流立即停止。
 
-首次回補（建議每次 30 筆）：
-    python fetch_cboe.py --start 2020-01-01 --limit 30
-只補最近一段期間：
-    python fetch_cboe.py --start 2026-11-01 --limit 30
-指定區間／由舊到新：
-    python fetch_cboe.py --start 2022-01-01 --end 2022-12-31 --limit 30 --order oldest
-
-輸出 equity_put_call.csv、total_put_call.csv；重跑不覆寫已有日期。
-注意：必須將 CSV commit 回 GitHub，否則下一次 Actions 會從空白狀態重來。
+使用：python fetch_cboe.py --start 2020-01-01 --limit 25 --order newest --delay 10
 依賴：requests beautifulsoup4 pandas_market_calendars
 """
 import argparse
@@ -31,6 +23,10 @@ EQUITY_FILE = ROOT / 'equity_put_call.csv'
 TOTAL_FILE = ROOT / 'total_put_call.csv'
 KNOWN = {'2026-11-12': (0.72, 0.89), '2026-11-13': (0.63, 0.85), '2026-11-20': (0.77, 1.13)}
 LABELS = {'EQUITY PUT/CALL RATIO': 'equity', 'TOTAL PUT/CALL RATIO': 'total'}
+
+
+class RateLimited(Exception):
+    """伺服器拒絕或限制請求：停止整批，不重試。"""
 
 
 def read_csv(path):
@@ -56,9 +52,12 @@ def read_csv(path):
 
 
 def get_ratios(session, day):
-    for attempt in range(3):
+    # 只重試暫時性網路錯誤與 5xx；403/429 一律立即停止
+    for attempt in range(2):
         try:
             response = session.get(URL, params={'dt': day}, timeout=(10, 35))
+            if response.status_code in (403, 429):
+                raise RateLimited(f'HTTP {response.status_code}：Cboe 已拒絕／限制請求，立即停止本批次')
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             found = {}
@@ -73,17 +72,24 @@ def get_ratios(session, day):
                 if match:
                     found[LABELS[label]] = float(match.group(1))
             if set(found) != {'equity', 'total'}:
-                raise ValueError('未找到完整 Equity / Total Put/Call Ratio')
+                raise ValueError('頁面缺少完整 Equity / Total Put/Call Ratio（不重試，以免重複請求）')
             equity, total = found['equity'], found['total']
             if not (0.05 <= equity <= 5 and 0.05 <= total <= 5):
-                raise ValueError('比率超出檢查範圍')
-            if day in KNOWN and (abs(equity - KNOWN[day][0]) > 0.011 or abs(total - KNOWN[day][1]) > 0.011):
-                raise ValueError('基準日數值不符，可能忽略了指定日期')
+                raise ValueError('比率超出合理範圍')
+            if day in KNOWN and (abs(equity - KNOWN[day][0]) > .011 or abs(total - KNOWN[day][1]) > .011):
+                raise ValueError('基準日期數值不符，可能忽略指定日期')
             return equity, total
-        except (requests.RequestException, ValueError) as exc:
-            if attempt == 2:
-                raise RuntimeError(str(exc)) from exc
-            time.sleep(2 * (attempt + 1))
+        except RateLimited:
+            raise
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status is None or status < 500 or attempt == 1:
+                raise
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt == 1:
+                raise
+        if attempt == 0:
+            time.sleep(30)
 
 
 def write_csv(path, rows):
@@ -101,17 +107,18 @@ def write_csv(path, rows):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='增量回補 Cboe Put/Call 歷史資料')
-    parser.add_argument('--start', default='2020-01-01', help='最早日期 YYYY-MM-DD')
-    parser.add_argument('--end', help='最晚日期 YYYY-MM-DD；預設美東昨天')
-    parser.add_argument('--limit', type=int, default=30, help='每次最多查詢幾個日期，1～100')
-    parser.add_argument('--order', choices=['newest', 'oldest'], default='newest', help='預設先補最近的資料')
-    parser.add_argument('--delay', type=float, default=1.0, help='每次查詢間隔秒數，至少 0.5')
+    parser = argparse.ArgumentParser(description='保守型 Cboe 增量歷史回補')
+    parser.add_argument('--start', default='2020-01-01')
+    parser.add_argument('--end')
+    parser.add_argument('--limit', type=int, default=25)
+    parser.add_argument('--order', choices=['newest', 'oldest'], default='newest')
+    parser.add_argument('--delay', type=float, default=10.0)
     args = parser.parse_args()
-    if not 1 <= args.limit <= 100:
-        parser.error('--limit 必須介於 1～100')
-    if args.delay < 0.5:
-        parser.error('--delay 不得小於 0.5 秒')
+    if not 1 <= args.limit <= 25:
+        parser.error('--limit 必須介於 1～25')
+    if args.delay < 10:
+        parser.error('--delay 至少 10 秒')
+
     today_et = datetime.now(ZoneInfo('America/New_York')).date()
     start = date.fromisoformat(args.start)
     end = min(date.fromisoformat(args.end) if args.end else today_et - timedelta(days=1), today_et - timedelta(days=1))
@@ -130,33 +137,36 @@ def main():
         return
 
     session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (compatible; MarketHeatRadar/1.0)'})
-    success, failed = 0, []
+    session.headers.update({'User-Agent': 'MarketHeatRadar/1.0 (historical research)'})
+    success, failed, blocked = 0, [], False
     try:
-        for day in pending:
+        for i, day in enumerate(pending):
+            if i:
+                time.sleep(args.delay)
             try:
                 e, t = get_ratios(session, day)
                 equity[day], total[day] = e, t
-                success += 1
-                print(f'{day}: Equity={e:.2f}, Total={t:.2f}', flush=True)
-            except Exception as exc:
-                failed.append(day)
-                print(f'{day}: 下載失敗：{exc}', flush=True)
-            # 每筆成功即儲存；GitHub Actions 中斷時，已取得資料仍在工作目錄
-            if success:
                 write_csv(EQUITY_FILE, equity)
                 write_csv(TOTAL_FILE, total)
-            time.sleep(args.delay)
+                success += 1
+                print(f'{day}: Equity={e:.2f}, Total={t:.2f}', flush=True)
+            except RateLimited as exc:
+                print(f'{day}: {exc}；停止所有後續查詢，請暫停排程並檢查', flush=True)
+                blocked = True
+                break
+            except (requests.RequestException, ValueError) as exc:
+                failed.append(day)
+                print(f'{day}: 跳過（{type(exc).__name__}: {exc}）', flush=True)
     finally:
         session.close()
 
     print(f'本次成功 {success}/{len(pending)}；累積 Equity={len(equity)}、Total={len(total)} 筆')
     if failed:
-        print('失敗日期：' + ', '.join(failed))
-    if not success:
-        raise RuntimeError('本次未成功取得任何新資料')
-    if failed:
-        print('部分日期未成功，之後重跑會再嘗試；不得將缺漏資料視為完整。')
+        print('未取得日期：' + ', '.join(failed))
+    if blocked:
+        raise RateLimited('偵測到 403/429，已停止回補；已取得的 CSV 保留供工作流程提交')
+    if not success and pending:
+        raise RuntimeError('本批沒有取得新資料，請檢查來源或休市日期')
 
 
 if __name__ == '__main__':

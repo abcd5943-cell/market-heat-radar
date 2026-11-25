@@ -30,8 +30,8 @@
   "fixed_correlation": null,
   "dynamic_correlation": null,
   "latest_date": "2026-11-25",
-  "fixed_heat": 34.89238410598,
-  "dynamic_heat": 34.89238410598,
+  "fixed_heat": 35.796357615905,
+  "dynamic_heat": 35.796357615905,
   "adjustments": [],
   "note": "前瞻快照；20 個美股對齊資料列報酬代理，非精確台股交易日。相關係數非勝率；未扣成本。"
 }

@@ -1,0 +1,35 @@
+name: Validate Market Heat Model
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Update Market Heat]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '40 1 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: market-heat-model-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python optimize_weights.py
+      - run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add data/model_snapshots.json data/model_validation.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Validate shadow model'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi

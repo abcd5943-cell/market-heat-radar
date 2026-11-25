@@ -1,0 +1,39 @@
+name: Sync TW Margin
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 14 * * 1-5'
+permissions:
+  contents: write
+concurrency:
+  group: tw-margin-sync
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fetch TWSE balances
+        id: fetch
+        continue-on-error: true
+        run: python fetch_tw_margin.py --limit 15
+      - name: Save CSV
+        run: |
+          if [ ! -f tw_margin.csv ]; then exit 1; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tw_margin.csv
+          if ! git diff --cached --quiet; then
+            git commit -m 'data: update TW margin balance'
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+      - name: Report fetch failure
+        if: steps.fetch.outcome == 'failure'
+        run: exit 1

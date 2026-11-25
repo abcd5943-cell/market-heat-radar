@@ -97,7 +97,7 @@ function draw(){
  chart=new Chart($('trend'),{type:'line',data:{labels:rows.map(r=>r.date),datasets:[
   {label:'美股熱度',data:rows.map(r=>r.heat),borderColor:'#64b5ff',spanGaps:false,pointRadius:0,borderWidth:2,yAxisID:'heat',tension:.1},
   {label:'台股加權指數',data:rows.map(r=>r.tw_close),borderColor:'#8796ac',pointRadius:0,borderWidth:1.5,yAxisID:'tw',spanGaps:false},
-  {type:'scatter',label:'模型觀察條件成立',data:rows.map((r,i)=>r.signal==='籌碼乾淨'&&good(r.heat)?{x:i,y:r.heat}:null).filter(Boolean),pointRadius:4,pointBackgroundColor:'#5ee0ac',yAxisID:'heat'}
+  {type:'line',label:'模型觀察條件成立',data:rows.map(r=>r.signal==='籌碼乾淨'&&good(r.heat)?Number(r.heat):null),showLine:false,spanGaps:false,pointRadius:4,pointHoverRadius:6,pointBackgroundColor:'#5ee0ac',pointBorderColor:'#5ee0ac',order:-1,yAxisID:'heat'}
  ]},options:{responsive:true,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{color:'#c5d3e6'}},tooltip:{callbacks:{title:items=>rows[items[0]?.dataIndex]?.date||''}}},scales:{x:{ticks:{color:'#899ab1',maxTicksLimit:6,callback:function(value){return (rows[value]?.date||'').slice(0,7)}},grid:{color:'#263349'}},heat:{type:'linear',position:'left',min:0,max:100,ticks:{color:'#899ab1'},grid:{color:'#263349'}},tw:{type:'linear',position:'right',ticks:{color:'#899ab1'},grid:{drawOnChartArea:false}}}}});
 }
 $('periods').addEventListener('click',e=>{if(e.target.tagName!=='BUTTON')return;days=Number(e.target.dataset.days);document.querySelectorAll('#periods button').forEach(b=>b.classList.toggle('active',b===e.target));if(payload)draw()});

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-25",
+  "generated_at": "2026-11-26",
   "weights": [
     25,
     15,
@@ -30,8 +30,8 @@
   "fixed_correlation": null,
   "dynamic_correlation": null,
   "latest_date": "2026-11-25",
-  "fixed_heat": 31.867549668879995,
-  "dynamic_heat": 31.867549668879995,
+  "fixed_heat": 32.793046357630004,
+  "dynamic_heat": 32.793046357630004,
   "adjustments": [],
   "note": "前瞻快照；20 個美股對齊資料列報酬代理，非精確台股交易日。相關係數非勝率；未扣成本。"
 }
